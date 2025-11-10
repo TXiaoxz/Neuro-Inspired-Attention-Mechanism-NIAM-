@@ -1,12 +1,14 @@
 # Neuro-Inspired Attention for Real-Time Audio Enhancement
 
 **Course**: Machine Learning for Signal Processing (MLSP)
-**Author**: Xupeng Zhang
+
+**Author**: Xupeng Zhang, Yuxi Zheng, Yunqi Liu, Xinyao Ye
+
 **Institution**: Johns Hopkins University
 
 ---
 
-## 🎯 Project Overview
+##  Project Overview
 
 ### Problem Statement
 In noisy environments (e.g., crowded streets, cafes, multiple speakers), it's difficult to focus on a target speaker's voice. While the human auditory system naturally implements selective attention (the "cocktail party effect"), current audio processing systems struggle with this task.
@@ -22,31 +24,31 @@ We propose a **Neuro-Inspired Attention Mechanism (NIAM)** that enables models t
 
 ---
 
-## 🏆 Key Achievements
+##  Key Achievements
 
-✅ **Three Baseline Models Trained & Evaluated**
+**Three Baseline Models Trained & Evaluated**
 - CNN (12.5M params): +5.44 dB SI-SNR improvement
 - RNN (3.3M params): +8.78 dB SI-SNR improvement
-- Transformer (15M params): **+10.54 dB SI-SNR improvement** 🏆
+- Transformer (15M params): **+10.54 dB SI-SNR improvement** 
 
-✅ **Cocktail Party Augmentation System**
+**Cocktail Party Augmentation System**
 - Realistic multi-speaker noise simulation (5 interferers)
 - Hybrid augmentation: 70% cocktail party + 30% traditional noise
 - Significantly more challenging than standard denoising
 
-✅ **Comprehensive Evaluation Framework**
+**Comprehensive Evaluation Framework**
 - Multi-model comparison with visualizations
 - SI-SNR, SNR, and MSE metrics
 - Automated performance analysis
 
-✅ **Key Insights**
+**Key Insights**
 - Transformer outperforms CNN by **94%** on cocktail party task
 - Training speed: Transformer (60 it/s) >> RNN (14.2 it/s) >> CNN (1.5 it/s)
 - Self-attention mechanism excels at source separation
 
 ---
 
-## 🧩 Research Approach
+##  Research Approach
 
 ### NIAM Module - Four Biological Hearing Mechanisms
 
@@ -59,7 +61,7 @@ NIAM integrates into Transformer's Multi-Head Attention module to learn which au
 
 ---
 
-## 🧱 Experimental Architecture
+##  Experimental Architecture
 
 ### 1. Baseline Models
 - **CNN**: Extract local time-frequency features
@@ -82,7 +84,7 @@ Output: Enhanced audio (target speaker amplified, noise suppressed)
 
 ---
 
-## 📂 Project Structure
+##  Project Structure
 
 ```
 MLSP_Project/
@@ -119,7 +121,7 @@ MLSP_Project/
 
 ---
 
-## 🔧 Audio Enhancement Pipeline
+##  Audio Enhancement Pipeline
 
 ### 1. Feature Extraction
 - **Mel-Spectrogram**: 80 mel bins, 25ms window, 10ms hop
@@ -146,7 +148,7 @@ Noisy Mel-Spec → CNN/RNN/Transformer → Attention Weights → Enhanced Mel-Sp
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Installation
 
@@ -196,7 +198,7 @@ python inference.py input.wav -o output_enhanced.wav -m checkpoints/transformer_
 
 ---
 
-## 📊 Experimental Results
+##  Experimental Results
 
 ### Baseline Model Performance
 
@@ -208,7 +210,7 @@ All models evaluated on **Cocktail Party** scenario (5 interfering speakers, 20-
 |-------|-----------|----------------|-------------------|-----------------|-----|
 | **CNN** | 12.5M | 1.5 it/s | +5.44 dB | +4.00 dB | 46.38 |
 | **RNN (GRU)** | 3.3M | 14.2 it/s | +8.78 dB | +1.52 dB | 77.01 |
-| **Transformer** 🏆 | ~15M | 60 it/s | **+10.54 dB** ⭐ | +2.50 dB | 67.19 |
+| **Transformer**  | ~15M | 60 it/s | **+10.54 dB**  | +2.50 dB | 67.19 |
 
 #### Key Findings
 
@@ -250,7 +252,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ## 📝 Current Progress
 
-### Phase 1: Baseline Models ✅ **COMPLETED**
+### Phase 1: Baseline Models  **COMPLETED**
 - [x] Data loading and preprocessing
 - [x] Noise augmentation pipeline (traditional + cocktail party)
 - [x] Feature extraction (Mel-Spectrogram)
@@ -261,7 +263,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 - [x] Comprehensive evaluation framework
 - [x] Multi-model comparison with visualizations
 
-### Phase 2: NIAM Development 📅 **IN PROGRESS**
+### Phase 2: NIAM Development  **IN PROGRESS**
 - [ ] Design NIAM attention mechanism
   - [ ] Selective attention module
   - [ ] Frequency tuning layer
@@ -271,14 +273,14 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 - [ ] Train and evaluate NIAM model
 - [ ] Target: +12-15 dB SI-SNR improvement
 
-### Phase 3: Real-time Demo 📅 (Planned)
+### Phase 3: Real-time Demo  (Planned)
 - [ ] Implement streaming interface
 - [ ] Optimize inference speed
 - [ ] Build interactive demo
 
 ---
 
-## 🛠 Technical Stack
+##  Technical Stack
 
 - **Deep Learning**: PyTorch 2.0+, torchaudio
 - **Audio Processing**: librosa, soundfile, Griffin-Lim
@@ -289,7 +291,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ---
 
-## 🔬 Implementation Details
+##  Implementation Details
 
 ### Model Architectures
 
@@ -329,7 +331,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ---
 
-## 📚 References
+##  References
 
 1. Vaswani et al. (2017) - Attention is All You Need
 2. Luo & Mesgarani (2019) - Conv-TasNet for Speech Separation
@@ -339,7 +341,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ---
 
-## 📄 Project Files
+##  Project Files
 
 ### Training Scripts
 - `train_fast.py` - CNN model training
@@ -357,11 +359,14 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ---
 
-## 🎓 Academic Context
+##  Academic Context
 
 This project was developed as part of the Machine Learning for Signal Processing (MLSP) course at Johns Hopkins University. The work demonstrates the application of modern deep learning architectures (CNN, RNN, Transformer) to the classic "cocktail party problem" in audio signal processing.
 
-**Author**: Xupeng Zhang
+**Author**: Xupeng Zhang, Yuxi Zheng, Yunqi Liu, Xinyao Ye
+
 **Institution**: Johns Hopkins University
+
 **Course**: Machine Learning for Signal Processing (MLSP)
+
 **Last Updated**: November 9, 2025
