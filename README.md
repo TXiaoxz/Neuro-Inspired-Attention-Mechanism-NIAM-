@@ -250,7 +250,7 @@ Target: **+12-15 dB SI-SNR improvement** on cocktail party scenario by adding:
 
 ---
 
-## 📝 Current Progress
+## Current Progress
 
 ### Phase 1: Baseline Models  **COMPLETED**
 - [x] Data loading and preprocessing
