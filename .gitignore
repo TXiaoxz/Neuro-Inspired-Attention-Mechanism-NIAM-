@@ -1,0 +1,48 @@
+# Dataset cache (very large: 6.5GB)
+data/cache/
+data/raw/
+data/processed/
+
+# Model checkpoints (large files)
+checkpoints/*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+mlsp_project/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Jupyter notebooks (may contain tokens)
+*.ipynb
