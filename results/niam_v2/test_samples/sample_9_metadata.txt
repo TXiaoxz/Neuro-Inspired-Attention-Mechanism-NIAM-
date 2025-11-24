@@ -1,0 +1,6 @@
+Sample 9
+Dataset Index: 279
+Text: every year and i think we have the capacity to to start doing something there one of our challenges would be we have a property there that supposed to be dedicated for the park we may go to the county council and ask them to consider waiving the park instead
+Interferer Indices: [22, 235, 274, 63, 193]
+SNR: 8 dB
+Duration: 10.00s

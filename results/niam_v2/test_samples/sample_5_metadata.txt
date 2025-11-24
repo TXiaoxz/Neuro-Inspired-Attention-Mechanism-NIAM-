@@ -1,0 +1,6 @@
+Sample 5
+Dataset Index: 275
+Text: by ordinance and so this is something that would have a potential to get a dedicated permanent fund but that again you've got to go through steps to do that i know earlier miss king from south maui as a candidate talked about how long it's for her to get
+Interferer Indices: [112, 229, 302, 142, 3]
+SNR: 8 dB
+Duration: 10.00s

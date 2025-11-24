@@ -1,0 +1,6 @@
+Sample 1
+Dataset Index: 271
+Text: breakdown of costs what are the administrate of costs how many people are being benefited how is it going to carry on we know it's important but everybody who comes before the consul has their own story and their own ta
+Interferer Indices: [114, 71, 52, 280, 44]
+SNR: 8 dB
+Duration: 10.00s

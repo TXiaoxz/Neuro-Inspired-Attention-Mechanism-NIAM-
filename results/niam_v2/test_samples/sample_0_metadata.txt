@@ -1,0 +1,6 @@
+Sample 0
+Dataset Index: 270
+Text: that so that's what i would be looking for how can we make sure that this gets through and i would need to have all the information possible in order to have an order to create a really good
+Interferer Indices: [328, 57, 12, 140, 125]
+SNR: 8 dB
+Duration: 10.00s

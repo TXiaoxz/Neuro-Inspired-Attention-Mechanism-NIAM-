@@ -1,0 +1,6 @@
+Sample 6
+Dataset Index: 276
+Text: project here was to to build a compost but i didn't do that alone i had a team of people i had tim gunter from this community standing right there with me saying yes there is a market for this stuff we need this
+Interferer Indices: [81, 216, 174, 142, 79]
+SNR: 8 dB
+Duration: 10.00s

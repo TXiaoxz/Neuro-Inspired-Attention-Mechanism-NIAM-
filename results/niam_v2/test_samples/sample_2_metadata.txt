@@ -1,0 +1,6 @@
+Sample 2
+Dataset Index: 272
+Text: amount of money and an unlimited amount of requests so basically i would sit on even help you look at how you can tailor your presentation to make it palatable to the powers that be because 
+Interferer Indices: [303, 216, 16, 15, 47]
+SNR: 8 dB
+Duration: 10.00s

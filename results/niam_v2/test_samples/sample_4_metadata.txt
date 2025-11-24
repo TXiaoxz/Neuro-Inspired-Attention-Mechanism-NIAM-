@@ -1,0 +1,6 @@
+Sample 4
+Dataset Index: 274
+Text: discussing holding on or if it's doing above what performance it was presented with then you can get expanded funds as far as permanent funds that's why we have other funds that got dedicated funds and that was passed
+Interferer Indices: [288, 101, 333, 280, 214]
+SNR: 8 dB
+Duration: 10.00s

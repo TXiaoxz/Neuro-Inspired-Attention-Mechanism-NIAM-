@@ -1,0 +1,6 @@
+Sample 7
+Dataset Index: 277
+Text: i did fall down because i take the grass and i put it into my terrill as mulch and how you fall off a lot more you're going to have to ask my wife about that but i love the thought i'd like to know more about it
+Interferer Indices: [110, 172, 52, 47, 194]
+SNR: 8 dB
+Duration: 10.00s

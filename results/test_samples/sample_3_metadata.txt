@@ -1,0 +1,6 @@
+Sample 3
+Dataset Index: 273
+Text: income so i think what joe said is very important you need to make sure that you have the performance of a project in this case for a fund you need to make sure that it's performing and if it is performing then you can start
+Interferer Indices: [111, 119, 258, 309, 13]
+SNR: 8 dB
+Duration: 10.00s

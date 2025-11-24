@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""
+Transformer Audio Enhancement Inference Script (STFT version)
+
+Loads trained model and enhances audio files using STFT + noisy phase reconstruction.
+This script properly preserves phase to avoid static noise.
+"""
+
+import torch
+import torch.nn as nn
+import soundfile as sf
+import numpy as np
+import argparse
+import os
+import sys
+from pathlib import Path
+import math
+
+# Add project root to path
+PROJECT_ROOT = '/home/dlwlx05/project/NIAM/Neuro-Inspired-Attention-Mechanism-NIAM--main'
+sys.path.insert(0, PROJECT_ROOT)
+
+from datasets import load_dataset
+from src.utils.noise_generation import CocktailPartyNoise
+
+# ============================================================================
+# Model Definition (must match train_transformer_v2.py)
+# ============================================================================
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :]
+
+
+class TransformerEnhancer(nn.Module):
+    def __init__(self, n_freq_bins=201, d_model=256, nhead=8, num_layers=4, dim_feedforward=1024, dropout=0.1):
+        super().__init__()
+        self.n_freq_bins = n_freq_bins
+        self.d_model = d_model
+
+        self.input_proj = nn.Linear(n_freq_bins, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, max_len=5000)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=True,
+            norm_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.output_proj = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, n_freq_bins),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        batch_size, n_freq_bins, time_steps = x.shape
+        x = x.transpose(1, 2)
+        x = self.input_proj(x)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        mask = self.output_proj(x)
+        mask = mask.transpose(1, 2)
+        return mask
+
+
+# ============================================================================
+# Audio Enhancer Class
+# ============================================================================
+
+class AudioEnhancer:
+    def __init__(self, model_path, device='cuda', n_fft=400, hop_length=160, sample_rate=16000):
+        """
+        Initialize audio enhancer
+
+        Args:
+            model_path: Path to model checkpoint
+            device: 'cuda' or 'cpu'
+            n_fft: STFT n_fft parameter
+            hop_length: STFT hop length
+            sample_rate: Audio sample rate
+        """
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.sample_rate = sample_rate
+        self.window = torch.hann_window(n_fft).to(self.device)
+
+        # Load model
+        print(f"Loading model from: {model_path}")
+        self.model = TransformerEnhancer(
+            n_freq_bins=n_fft // 2 + 1,
+            d_model=256,
+            nhead=8,
+            num_layers=4,
+            dim_feedforward=1024,
+            dropout=0.1
+        ).to(self.device)
+
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.eval()
+        print(f"✓ Model loaded on {self.device}")
+
+    def enhance(self, noisy_audio):
+        """
+        Enhance a noisy audio signal
+
+        Args:
+            noisy_audio: Noisy audio waveform (numpy array or torch tensor)
+
+        Returns:
+            enhanced_audio: Enhanced audio waveform (numpy array)
+        """
+        # Convert to torch tensor
+        if isinstance(noisy_audio, np.ndarray):
+            noisy_audio = torch.FloatTensor(noisy_audio)
+
+        if noisy_audio.dim() == 1:
+            noisy_audio = noisy_audio.unsqueeze(0)
+
+        noisy_audio = noisy_audio.to(self.device)
+        original_length = noisy_audio.shape[-1]
+
+        # STFT
+        noisy_stft = torch.stft(
+            noisy_audio,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.n_fft,
+            window=self.window,
+            return_complex=True,
+            center=True
+        )
+
+        # Separate magnitude and phase
+        noisy_mag = torch.abs(noisy_stft)  # [1, freq, time]
+        noisy_phase = torch.angle(noisy_stft)  # [1, freq, time]
+
+        # Model inference (predicts mask)
+        with torch.no_grad():
+            mask = self.model(noisy_mag)
+
+        # Apply mask to get enhanced magnitude
+        enhanced_mag = mask * noisy_mag
+
+        # Reconstruct using noisy phase (KEY STEP to avoid static noise!)
+        enhanced_stft = enhanced_mag * torch.exp(1j * noisy_phase)
+
+        # iSTFT
+        enhanced_audio = torch.istft(
+            enhanced_stft,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.n_fft,
+            window=self.window,
+            center=True,
+            length=original_length
+        )
+
+        # Convert to numpy
+        enhanced_audio = enhanced_audio.squeeze().cpu().numpy()
+
+        return enhanced_audio
+
+    def enhance_file(self, input_path, output_path):
+        """
+        Enhance an audio file
+
+        Args:
+            input_path: Path to input audio file
+            output_path: Path to output audio file
+        """
+        # Load audio
+        noisy_audio, sr = sf.read(input_path)
+
+        # Convert to mono if stereo
+        if len(noisy_audio.shape) > 1:
+            noisy_audio = noisy_audio.mean(axis=1)
+
+        # Resample if needed (simplified - assumes same sr)
+        if sr != self.sample_rate:
+            print(f"Warning: Sample rate mismatch ({sr} Hz vs {self.sample_rate} Hz)")
+
+        # Enhance
+        enhanced_audio = self.enhance(noisy_audio)
+
+        # Save
+        os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+        sf.write(output_path, enhanced_audio, self.sample_rate)
+
+        print(f"✓ Enhanced audio saved to: {output_path}")
+
+
+# ============================================================================
+# Batch Test Sample Generation
+# ============================================================================
+
+def generate_test_samples(model_path, num_samples=5, output_dir=None):
+    """
+    Generate test samples for evaluation
+
+    Creates clean/noisy/enhanced triplets for visual/audio comparison
+
+    Args:
+        model_path: Path to trained model
+        num_samples: Number of test samples to generate
+        output_dir: Output directory (default: results/test_samples/)
+    """
+    if output_dir is None:
+        output_dir = f"{PROJECT_ROOT}/results/test_samples"
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("\n" + "="*80)
+    print("GENERATING TEST SAMPLES")
+    print("="*80)
+
+    # Load dataset
+    print("\nLoading dataset...")
+    dataset = load_dataset(
+        "MLCommons/peoples_speech",
+        "microset",
+        split="train",
+        cache_dir="/home/dlwlx05/project/NIAM/data/"
+    )
+
+    # Create noise augmentor
+    noise_aug = CocktailPartyNoise(
+        dataset=dataset,
+        num_interferers=5,
+        snr_db=8,
+        seed=42
+    )
+
+    # Create enhancer
+    enhancer = AudioEnhancer(model_path)
+
+    # Use validation set indices (270-335)
+    val_indices = list(range(270, min(336, 270 + num_samples)))
+
+    print(f"\nGenerating {len(val_indices)} test samples...")
+    print(f"Output directory: {output_dir}\n")
+
+    for i, idx in enumerate(val_indices):
+        print(f"Processing sample {i+1}/{len(val_indices)} (dataset index {idx})...")
+
+        # Get clean audio
+        sample = dataset[idx]
+        clean_audio = sample['audio']['array'].astype(np.float32)
+        text = sample['text']
+
+        # Crop to 10 seconds
+        max_length = 160000
+        if len(clean_audio) > max_length:
+            clean_audio = clean_audio[:max_length]
+
+        # Generate noisy audio
+        noisy_audio, clean_audio, noise_indices = noise_aug.add_noise(
+            clean_audio,
+            target_idx=idx,
+            target_length=len(clean_audio)
+        )
+
+        # Enhance
+        enhanced_audio = enhancer.enhance(noisy_audio)
+
+        # Save all three versions
+        clean_path = f"{output_dir}/sample_{i}_clean.wav"
+        noisy_path = f"{output_dir}/sample_{i}_noisy.wav"
+        enhanced_path = f"{output_dir}/sample_{i}_enhanced.wav"
+
+        sf.write(clean_path, clean_audio, 16000)
+        sf.write(noisy_path, noisy_audio, 16000)
+        sf.write(enhanced_path, enhanced_audio, 16000)
+
+        # Save metadata
+        with open(f"{output_dir}/sample_{i}_metadata.txt", 'w') as f:
+            f.write(f"Sample {i}\n")
+            f.write(f"Dataset Index: {idx}\n")
+            f.write(f"Text: {text}\n")
+            f.write(f"Interferer Indices: {noise_indices}\n")
+            f.write(f"SNR: 8 dB\n")
+            f.write(f"Duration: {len(clean_audio)/16000:.2f}s\n")
+
+        print(f"  ✓ Saved: sample_{i}_*.wav")
+
+    print(f"\n✓ Generated {len(val_indices)} test samples in {output_dir}/")
+
+
+# ============================================================================
+# Command Line Interface
+# ============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description='Transformer Audio Enhancement Inference')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # Enhance single file
+    enhance_parser = subparsers.add_parser('enhance', help='Enhance a single audio file')
+    enhance_parser.add_argument('input', type=str, help='Input audio file path')
+    enhance_parser.add_argument('-o', '--output', type=str, default=None,
+                                help='Output audio file path (default: <input>_enhanced.wav)')
+    enhance_parser.add_argument('-m', '--model', type=str,
+                                default=f'{PROJECT_ROOT}/checkpoints/transformer_stft_best.pt',
+                                help='Model checkpoint path')
+
+    # Generate test samples
+    test_parser = subparsers.add_parser('generate_test', help='Generate test samples')
+    test_parser.add_argument('-m', '--model', type=str,
+                             default=f'{PROJECT_ROOT}/checkpoints/transformer_stft_best.pt',
+                             help='Model checkpoint path')
+    test_parser.add_argument('-n', '--num_samples', type=int, default=5,
+                             help='Number of test samples')
+    test_parser.add_argument('-o', '--output_dir', type=str, default=None,
+                             help='Output directory')
+
+    args = parser.parse_args()
+
+    if args.command == 'enhance':
+        # Check input file
+        if not os.path.exists(args.input):
+            print(f"Error: Input file does not exist: {args.input}")
+            return
+
+        # Set output path
+        if args.output is None:
+            input_path = Path(args.input)
+            args.output = str(input_path.parent / f"{input_path.stem}_enhanced.wav")
+
+        # Enhance
+        enhancer = AudioEnhancer(args.model)
+        enhancer.enhance_file(args.input, args.output)
+
+    elif args.command == 'generate_test':
+        generate_test_samples(args.model, args.num_samples, args.output_dir)
+
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

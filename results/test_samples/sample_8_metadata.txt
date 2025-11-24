@@ -1,0 +1,6 @@
+Sample 8
+Dataset Index: 278
+Text: initiating something within our own agricultural subdivision to do compost and spun thing that we have there were already generating i think tens of thousands of pounds of food out of that subdivision every year
+Interferer Indices: [49, 183, 176, 310, 135]
+SNR: 8 dB
+Duration: 10.00s
