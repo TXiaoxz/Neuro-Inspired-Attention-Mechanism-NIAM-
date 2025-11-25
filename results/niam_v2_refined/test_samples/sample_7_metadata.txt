@@ -1,0 +1,6 @@
+Sample 7
+Dataset Index: 277
+Text: charitable groups have to be if they're funded by the government have to be really careful to stay within really strict lines and that i guess i'm naive but i hadn't realized that that was the case if you take the money
+Interferer Indices: [72927, 212188, 227882, 1704, 198917]
+SNR: 8 dB
+Duration: 10.00s

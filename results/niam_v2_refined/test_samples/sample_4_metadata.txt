@@ -1,0 +1,6 @@
+Sample 4
+Dataset Index: 274
+Text: i didn't actually do accounts after everybody was there but i might get my guess is about forty five to fifty people but so committed i mean turning out on a friday night lovely sunny evening but these people came and
+Interferer Indices: [57315, 60991, 132476, 157816, 6957]
+SNR: 8 dB
+Duration: 10.00s

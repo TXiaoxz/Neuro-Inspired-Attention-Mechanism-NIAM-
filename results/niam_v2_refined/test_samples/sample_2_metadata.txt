@@ -1,0 +1,6 @@
+Sample 2
+Dataset Index: 272
+Text: this is not this is not just about g e for you and i'm a it's hard to work if you have a small number of people and it seems to me to make sense that the more networking you can do the more that you can
+Interferer Indices: [177393, 194162, 233880, 142965, 22791]
+SNR: 8 dB
+Duration: 10.00s

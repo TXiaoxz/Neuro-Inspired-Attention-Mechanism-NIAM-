@@ -1,0 +1,6 @@
+Sample 9
+Dataset Index: 279
+Text: that is permitted to be advocacy or even lobbying but it's quite a low percentage i think about twenty percent with as with other funders the problem is that foundation sir founded
+Interferer Indices: [72843, 40759, 56444, 250928, 200146]
+SNR: 8 dB
+Duration: 10.00s

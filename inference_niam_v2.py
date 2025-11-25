@@ -13,9 +13,10 @@ import os
 import sys
 import math
 
-# Add project root to path
-PROJECT_ROOT = '/home/dlwlx05/project/NIAM/Neuro-Inspired-Attention-Mechanism-NIAM--main'
-sys.path.insert(0, PROJECT_ROOT)
+# Add project root to path and load config
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config import PROJECT_ROOT, CLEAN_SA_CACHE, RESULTS_DIR
 
 from datasets import load_dataset
 from src.utils.noise_generation import CocktailPartyNoise
@@ -40,11 +41,12 @@ class PositionalEncoding(nn.Module):
 
 
 class TransformerEnhancer(nn.Module):
-    def __init__(self, n_freq_bins=201, d_model=256, nhead=8, num_layers=4, dim_feedforward=1024, dropout=0.1, use_niam=False):
+    def __init__(self, n_freq_bins=201, d_model=256, nhead=8, num_layers=4, dim_feedforward=1024, dropout=0.1, use_niam=False, refinement_mode=False, refinement_alpha=0.2):
         super().__init__()
         self.n_freq_bins = n_freq_bins
         self.d_model = d_model
         self.use_niam = use_niam
+        self.refinement_mode = refinement_mode
 
         self.input_proj = nn.Linear(n_freq_bins, d_model)
         self.pos_encoder = PositionalEncoding(d_model, max_len=5000)
@@ -61,9 +63,12 @@ class TransformerEnhancer(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         if use_niam:
-            self.niam = NIAM(hidden_dim=d_model)
+            self.niam = NIAM(hidden_dim=d_model, refinement_mode=refinement_mode, refinement_alpha=refinement_alpha)
             print("\n" + "="*70)
-            print("NIAM v2 INTEGRATED (Inference)")
+            if refinement_mode:
+                print("NIAM v2 INTEGRATED (Refinement Mode - Inference)")
+            else:
+                print("NIAM v2 INTEGRATED (Inference)")
             print("="*70)
         else:
             self.niam = None
@@ -83,12 +88,27 @@ class TransformerEnhancer(nn.Module):
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
 
+        # Save Transformer output before NIAM (for refinement mode)
+        transformer_features = x.clone() if self.refinement_mode and self.niam is not None else None
+
         if self.niam is not None:
-            x = self.niam(x)
+            if self.refinement_mode:
+                # Refinement mode: NIAM returns (refined, baseline, residual)
+                x, _, _ = self.niam(x)
+            else:
+                # Standard mode
+                x = self.niam(x)
 
         mask = self.output_proj(x)
         mask = mask.transpose(1, 2)
-        return mask
+
+        # Return mask and transformer features (for refinement loss)
+        if self.refinement_mode and transformer_features is not None:
+            transformer_mask = self.output_proj(transformer_features)
+            transformer_mask = transformer_mask.transpose(1, 2)
+            return mask, transformer_mask
+        else:
+            return mask
 
 
 # ============================================================================
@@ -96,7 +116,7 @@ class TransformerEnhancer(nn.Module):
 # ============================================================================
 
 class AudioEnhancer:
-    def __init__(self, model_path, device='cuda', n_fft=400, hop_length=160, sample_rate=16000):
+    def __init__(self, model_path, device='cuda', n_fft=400, hop_length=160, sample_rate=16000, refinement_mode=False, refinement_alpha=0.2):
         """
         Initialize audio enhancer
 
@@ -106,11 +126,14 @@ class AudioEnhancer:
             n_fft: STFT n_fft parameter
             hop_length: STFT hop length
             sample_rate: Audio sample rate
+            refinement_mode: Whether model was trained in refinement mode
+            refinement_alpha: Residual correction strength (if refinement mode)
         """
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.sample_rate = sample_rate
+        self.refinement_mode = refinement_mode
         self.window = torch.hann_window(n_fft).to(self.device)
 
         # Load model
@@ -122,12 +145,16 @@ class AudioEnhancer:
             num_layers=4,
             dim_feedforward=1024,
             dropout=0.1,
-            use_niam=True
+            use_niam=True,
+            refinement_mode=refinement_mode,
+            refinement_alpha=refinement_alpha
         ).to(self.device)
 
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
         print(f"✓ Model loaded on {self.device}")
+        if refinement_mode:
+            print(f"  Refinement mode enabled (α={refinement_alpha})")
 
     def enhance(self, noisy_audio):
         """
@@ -166,7 +193,11 @@ class AudioEnhancer:
 
         # Model inference (predicts mask)
         with torch.no_grad():
-            mask = self.model(noisy_mag)
+            if self.refinement_mode:
+                # Refinement mode returns (mask, transformer_mask)
+                mask, _ = self.model(noisy_mag)
+            else:
+                mask = self.model(noisy_mag)
 
         # Apply mask to get enhanced magnitude
         enhanced_mag = mask * noisy_mag
@@ -195,7 +226,7 @@ class AudioEnhancer:
 # Test Sample Generation
 # ============================================================================
 
-def generate_test_samples(model_path, num_samples=10, output_dir=None):
+def generate_test_samples(model_path, num_samples=10, output_dir=None, refinement_mode=False, refinement_alpha=0.2):
     """
     Generate test samples for evaluation
 
@@ -205,22 +236,30 @@ def generate_test_samples(model_path, num_samples=10, output_dir=None):
         model_path: Path to trained model
         num_samples: Number of test samples to generate
         output_dir: Output directory (default: results/niam_v2/test_samples/)
+        refinement_mode: Whether model was trained in refinement mode
+        refinement_alpha: Residual correction strength
     """
     if output_dir is None:
-        output_dir = f"{PROJECT_ROOT}/results/niam_v2/test_samples"
+        if refinement_mode:
+            output_dir = f"{PROJECT_ROOT}/results/niam_v2_refined/test_samples"
+        else:
+            output_dir = f"{PROJECT_ROOT}/results/niam_v2/test_samples"
 
     os.makedirs(output_dir, exist_ok=True)
 
     print("\n" + "="*80)
-    print("GENERATING NIAM v2 TEST SAMPLES")
+    if refinement_mode:
+        print("GENERATING NIAM v2 REFINED TEST SAMPLES")
+    else:
+        print("GENERATING NIAM v2 TEST SAMPLES")
     print("="*80)
 
     # Load dataset
     print("\nLoading dataset...")
-    cache_dir = '/home/dlwlx05/project/NIAM/data/cache'
+    cache_dir = CLEAN_SA_CACHE
     dataset = load_dataset(
         "MLCommons/peoples_speech",
-        "microset",
+        "clean_sa",
         split="train",
         cache_dir=cache_dir
     )
@@ -235,7 +274,7 @@ def generate_test_samples(model_path, num_samples=10, output_dir=None):
     )
 
     # Create enhancer
-    enhancer = AudioEnhancer(model_path)
+    enhancer = AudioEnhancer(model_path, refinement_mode=refinement_mode, refinement_alpha=refinement_alpha)
 
     # Use validation set indices (270-279 for 10 samples)
     val_indices = list(range(270, min(336, 270 + num_samples)))
@@ -304,13 +343,23 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='NIAM v2 Inference')
     parser.add_argument('-m', '--model', type=str,
-                        default='/home/dlwlx05/project/NIAM/results/niam_v2/checkpoints/transformer_niam_v2_best.pt',
+                        default=os.path.join(RESULTS_DIR, 'niam_v2', 'checkpoints', 'transformer_niam_v2_best.pt'),
                         help='Model checkpoint path')
     parser.add_argument('-n', '--num_samples', type=int, default=10,
                         help='Number of test samples')
     parser.add_argument('-o', '--output_dir', type=str, default=None,
                         help='Output directory')
+    parser.add_argument('--refinement', action='store_true',
+                        help='Use refinement mode (for models trained with refinement)')
+    parser.add_argument('--alpha', type=float, default=0.2,
+                        help='Residual correction strength (default: 0.2)')
 
     args = parser.parse_args()
 
-    generate_test_samples(args.model, args.num_samples, args.output_dir)
+    # Auto-detect refinement mode from model path
+    if 'refined' in args.model:
+        args.refinement = True
+        print("Auto-detected refinement mode from model path")
+
+    generate_test_samples(args.model, args.num_samples, args.output_dir,
+                         refinement_mode=args.refinement, refinement_alpha=args.alpha)

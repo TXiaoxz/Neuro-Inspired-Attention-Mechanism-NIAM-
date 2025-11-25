@@ -1,0 +1,6 @@
+Sample 8
+Dataset Index: 278
+Text: you have to be ready for the for the pressures and the control and a certain amount of control particularly from the government the rule with charities i think is that there's a certain percentage of your educational work
+Interferer Indices: [211241, 41854, 183014, 110786, 89195]
+SNR: 8 dB
+Duration: 10.00s

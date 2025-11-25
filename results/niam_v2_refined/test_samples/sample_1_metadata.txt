@@ -1,0 +1,6 @@
+Sample 1
+Dataset Index: 271
+Text: environment biodiversity agriculture use of chemicals herbicides pesticides kill off the you know you just go on and the at the meeting the people that with their easily
+Interferer Indices: [64197, 58514, 36580, 193062, 26869]
+SNR: 8 dB
+Duration: 10.00s

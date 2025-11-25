@@ -1,0 +1,6 @@
+Sample 6
+Dataset Index: 276
+Text: activism thing and i'm learning hugely every day i learn new things but i was appalled to understand as i have done in the last month that nonprofit groups 
+Interferer Indices: [142854, 109975, 57788, 117758, 154473]
+SNR: 8 dB
+Duration: 10.00s

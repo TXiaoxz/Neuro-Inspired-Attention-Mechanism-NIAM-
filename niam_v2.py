@@ -163,81 +163,144 @@ class NoiseAdaptationController(nn.Module):
 
 class NIAM(nn.Module):
     """
-    NIAM v2 - Improved version
+    NIAM v2 - Improved version with Residual Refinement Mode
     Key improvements:
     1. Learnable residual weights (initialized to 0.2)
     2. LayerNorm after each module
     3. Soft thresholding for better gradients
+    4. Residual refinement mode for post-processing Transformer output
     """
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, refinement_mode=False, refinement_alpha=0.2):
         super().__init__()
-        
+
         self.hidden_dim = hidden_dim
-        
+        self.refinement_mode = refinement_mode
+        self.alpha = refinement_alpha  # Residual correction strength
+
         # 4 bio-inspired modules
         self.selective_attention = SelectiveAttentionModule(hidden_dim)
         self.frequency_tuning = FrequencyTuningLayer(hidden_dim, num_bands=3)
         self.temporal_focus = TemporalFocusMechanism(hidden_dim, window_size=5)
         self.noise_adaptation = NoiseAdaptationController(hidden_dim)
-        
+
         # Learnable residual weights (initialized to 0.2)
         self.residual_weight_1 = nn.Parameter(torch.tensor(0.2))
         self.residual_weight_2 = nn.Parameter(torch.tensor(0.2))
         self.residual_weight_3 = nn.Parameter(torch.tensor(0.2))
         self.residual_weight_4 = nn.Parameter(torch.tensor(0.2))
-        
+
+        # Residual refinement head (outputs small corrections)
+        if self.refinement_mode:
+            self.residual_head = nn.Sequential(
+                nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.Conv1d(hidden_dim, hidden_dim, kernel_size=1),
+                nn.Tanh()  # Output in [-1, 1] for small corrections
+            )
+
         print("="*70)
-        print("NIAM v2 (Improved) Initialized")
+        if refinement_mode:
+            print("NIAM v2 (Residual Refinement Mode) Initialized")
+        else:
+            print("NIAM v2 (Improved) Initialized")
         print("="*70)
         print("Module 1: Selective Attention Module - ENABLED")
         print("Module 2: Frequency Tuning Layer - ENABLED")
         print("Module 3: Temporal Focus Mechanism - ENABLED")
         print("Module 4: Noise Adaptation Controller - ENABLED")
         print("Improvements: LayerNorm, Learnable residual weights (init=0.2)")
-        print("Target: +12-15 dB SI-SNR improvement")
+        if refinement_mode:
+            print(f"Refinement Mode: α={refinement_alpha} (small residual corrections)")
+            print("Target: Smooth temporal discontinuities while staying close to Transformer")
+        else:
+            print("Target: +12-15 dB SI-SNR improvement")
         print("="*70)
         
-    def forward(self, x):
+    def forward(self, x, transformer_output=None):
+        """
+        Forward pass with optional refinement mode
+
+        Args:
+            x: Input features (noisy or Transformer output)
+            transformer_output: If provided, use refinement mode to add small corrections
+
+        Returns:
+            If refinement_mode: (refined_output, transformer_baseline, residual_correction)
+            Else: enhanced_output
+        """
         # Handle input format
         need_transpose_back = False
         if x.dim() == 3:
             if x.shape[2] == self.hidden_dim and x.shape[1] != self.hidden_dim:
                 x = x.transpose(1, 2)
                 need_transpose_back = True
-        
+
+        # Save transformer baseline if in refinement mode
+        if self.refinement_mode and transformer_output is None:
+            transformer_baseline = x.clone()
+        elif self.refinement_mode and transformer_output is not None:
+            if transformer_output.shape != x.shape:
+                transformer_output = transformer_output.transpose(1, 2)
+            transformer_baseline = transformer_output
+            x = transformer_output  # Use Transformer output as input
+        else:
+            transformer_baseline = None
+
         # Now x is (batch, hidden_dim, time)
         residual = x
-        
+
         # Module 1: Selective Attention
         x = self.selective_attention(x)
         x = x + residual * self.residual_weight_1
         residual = x
-        
+
         # Module 2: Frequency Tuning
         x = self.frequency_tuning(x)
         x = x + residual * self.residual_weight_2
         residual = x
-        
+
         # Module 3: Temporal Focus
         x = self.temporal_focus(x)
         x = x + residual * self.residual_weight_3
         residual = x
-        
+
         # Module 4: Noise Adaptation
         x = self.noise_adaptation(x)
         x = x + residual * self.residual_weight_4
-        
-        # Safety check
-        x = torch.clamp(x, min=-10.0, max=10.0)
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            print("Warning: NaN/Inf detected, using residual")
-            x = residual
-        
-        # Convert back if needed
-        if need_transpose_back:
-            x = x.transpose(1, 2)
-        
-        return x
+
+        # Refinement mode: output small residual correction
+        if self.refinement_mode:
+            residual_correction = self.residual_head(x)  # [-1, 1]
+            refined_output = transformer_baseline + self.alpha * residual_correction
+
+            # Safety check
+            refined_output = torch.clamp(refined_output, min=-10.0, max=10.0)
+            if torch.isnan(refined_output).any() or torch.isinf(refined_output).any():
+                print("Warning: NaN/Inf detected in refinement, using baseline")
+                refined_output = transformer_baseline
+                residual_correction = torch.zeros_like(residual_correction)
+
+            # Convert back if needed
+            if need_transpose_back:
+                refined_output = refined_output.transpose(1, 2)
+                transformer_baseline = transformer_baseline.transpose(1, 2)
+                residual_correction = residual_correction.transpose(1, 2)
+
+            return refined_output, transformer_baseline, residual_correction
+
+        else:
+            # Standard mode
+            # Safety check
+            x = torch.clamp(x, min=-10.0, max=10.0)
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                print("Warning: NaN/Inf detected, using residual")
+                x = residual
+
+            # Convert back if needed
+            if need_transpose_back:
+                x = x.transpose(1, 2)
+
+            return x
 
 
 # Test

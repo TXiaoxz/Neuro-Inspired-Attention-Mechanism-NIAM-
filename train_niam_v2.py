@@ -18,8 +18,10 @@ import sys
 import math
 import os
 
-PROJECT_ROOT = '/home/dlwlx05/project/NIAM/Neuro-Inspired-Attention-Mechanism-NIAM--main'
-sys.path.insert(0, PROJECT_ROOT)
+# Add project root to path and load config
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from config import PROJECT_ROOT, CLEAN_SA_CACHE, RESULTS_DIR
 
 # Import NIAM v2
 try:
@@ -55,16 +57,32 @@ USE_NIAM = NIAM_AVAILABLE
 USE_COCKTAIL_PARTY = COCKTAIL_AVAILABLE
 NUM_TRAIN_SAMPLES = 270
 NUM_VAL_SAMPLES = 66
-BATCH_SIZE = 4
-NUM_WORKERS = 4
+BATCH_SIZE = 128       # Optimized for RTX 5090 (32GB VRAM) - maximizing GPU utilization (~20-24GB expected)
+NUM_WORKERS = 16       # Optimized for AMD 9950X3D (16C/32T) - more workers to eliminate data loading bottleneck
 NUM_EPOCHS = 10
 
+# Refinement mode configuration
+USE_REFINEMENT = True  # Enable residual refinement mode
+REFINEMENT_ALPHA = 0.2  # Residual correction strength
+LAMBDA_SMOOTH = 0.1    # Temporal smoothing loss weight
+LAMBDA_REFINE = 0.5    # Refinement constraint loss weight
+
 print("\n" + "="*70)
-print("NIAM v2 Training")
+if USE_REFINEMENT:
+    print("NIAM v2 Residual Refinement Training")
+else:
+    print("NIAM v2 Training")
 print("="*70)
 print(f"Device: {device}")
 print(f"NIAM v2: {USE_NIAM}")
-print(f"Improvements: LayerNorm, Learnable residual (init=0.2)")
+if USE_REFINEMENT:
+    print(f"Refinement Mode: ENABLED")
+    print(f"  α (residual strength): {REFINEMENT_ALPHA}")
+    print(f"  λ_smooth: {LAMBDA_SMOOTH}")
+    print(f"  λ_refine: {LAMBDA_REFINE}")
+    print(f"  Target: Smooth discontinuities while staying close to Transformer")
+else:
+    print(f"Improvements: LayerNorm, Learnable residual (init=0.2)")
 print(f"Cocktail Party: {USE_COCKTAIL_PARTY}")
 print(f"Train samples: {NUM_TRAIN_SAMPLES}")
 print(f"Val samples: {NUM_VAL_SAMPLES}")
@@ -188,11 +206,12 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, :x.size(1), :]
 
 class TransformerEnhancer(nn.Module):
-    def __init__(self, n_freq_bins=201, d_model=256, nhead=8, num_layers=4, dim_feedforward=1024, dropout=0.1, use_niam=False):
+    def __init__(self, n_freq_bins=201, d_model=256, nhead=8, num_layers=4, dim_feedforward=1024, dropout=0.1, use_niam=False, refinement_mode=False, refinement_alpha=0.2):
         super().__init__()
         self.n_freq_bins = n_freq_bins
         self.d_model = d_model
         self.use_niam = use_niam
+        self.refinement_mode = refinement_mode
 
         self.input_proj = nn.Linear(n_freq_bins, d_model)
         self.pos_encoder = PositionalEncoding(d_model, max_len=5000)
@@ -207,11 +226,14 @@ class TransformerEnhancer(nn.Module):
             norm_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
+
         if use_niam and NIAM_AVAILABLE:
-            self.niam = NIAM(hidden_dim=d_model)
+            self.niam = NIAM(hidden_dim=d_model, refinement_mode=refinement_mode, refinement_alpha=refinement_alpha)
             print("\n" + "="*70)
-            print("NIAM v2 INTEGRATED")
+            if refinement_mode:
+                print("NIAM v2 INTEGRATED (Refinement Mode)")
+            else:
+                print("NIAM v2 INTEGRATED")
             print("="*70)
         else:
             self.niam = None
@@ -231,15 +253,31 @@ class TransformerEnhancer(nn.Module):
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
 
+        # Save Transformer output before NIAM (for refinement mode)
+        transformer_features = x.clone() if self.refinement_mode and self.niam is not None else None
+
         if self.niam is not None:
-            x = self.niam(x)
+            if self.refinement_mode:
+                # Refinement mode: NIAM returns (refined, baseline, residual)
+                x, _, _ = self.niam(x)
+            else:
+                # Standard mode
+                x = self.niam(x)
 
         mask = self.output_proj(x)
         mask = mask.transpose(1, 2)
-        return mask
+
+        # Return mask and transformer features (for refinement loss)
+        if self.refinement_mode and transformer_features is not None:
+            transformer_mask = self.output_proj(transformer_features)
+            transformer_mask = transformer_mask.transpose(1, 2)
+            return mask, transformer_mask
+        else:
+            return mask
 
 # Loss & Training
 def combined_loss(estimated, target):
+    """Original SI-SNR based loss"""
     est_flat = estimated.reshape(estimated.shape[0], -1)
     tgt_flat = target.reshape(target.shape[0], -1)
     est_flat = est_flat - est_flat.mean(dim=1, keepdim=True)
@@ -251,9 +289,55 @@ def combined_loss(estimated, target):
     si_snr = 10 * torch.log10(torch.sum(s_target ** 2, dim=1) / (torch.sum(e_noise ** 2, dim=1) + 1e-8))
     return -si_snr.mean() + 0.1 * F.mse_loss(estimated, target)
 
-def train_epoch(model, loader, optimizer, scaler=None):
+def temporal_smoothing_loss(spectrogram):
+    """
+    Temporal smoothing loss (L_smooth)
+    Penalizes frame-to-frame discontinuities to encourage smooth transitions
+
+    Args:
+        spectrogram: [batch, freq, time] tensor
+
+    Returns:
+        Scalar loss value
+
+    Formula:
+        L_smooth = (1/T) * Σ ||S_t - S_{t-1}||²
+
+    Lower values indicate smoother temporal evolution
+    """
+    # Compute frame-to-frame differences along time axis
+    diff = spectrogram[:, :, 1:] - spectrogram[:, :, :-1]  # [batch, freq, time-1]
+
+    # L2 norm of differences
+    loss = torch.mean(diff ** 2)
+
+    return loss
+
+def refinement_constraint_loss(refined, baseline):
+    """
+    Refinement constraint loss (L_refine)
+    Keeps refined output close to Transformer baseline
+
+    Args:
+        refined: NIAM refined output [batch, freq, time]
+        baseline: Transformer baseline output [batch, freq, time]
+
+    Returns:
+        Scalar loss value
+
+    Formula:
+        L_refine = ||S_refined - S_baseline||²
+
+    Lower values mean NIAM stays closer to Transformer output
+    """
+    return F.mse_loss(refined, baseline)
+
+def train_epoch(model, loader, optimizer, scaler=None, use_refinement=False, lambda_smooth=0.1, lambda_refine=0.5):
     model.train()
     total_loss = 0
+    total_clean_loss = 0
+    total_smooth_loss = 0
+    total_refine_loss = 0
 
     for noisy_stft, clean_stft in tqdm(loader, desc="Training"):
         noisy_stft, clean_stft = noisy_stft.to(device), clean_stft.to(device)
@@ -262,36 +346,87 @@ def train_epoch(model, loader, optimizer, scaler=None):
         if torch.cuda.is_available() and scaler is not None:
             from torch.amp import autocast
             with autocast(device_type='cuda'):
-                mask = model(noisy_stft)
-                enhanced_stft = mask * noisy_stft
-                loss = combined_loss(enhanced_stft, clean_stft)
+                if use_refinement:
+                    # Refinement mode: get both NIAM mask and Transformer baseline mask
+                    mask, transformer_mask = model(noisy_stft)
+                    enhanced_stft = mask * noisy_stft
+                    transformer_stft = transformer_mask * noisy_stft
+
+                    # Multi-task loss
+                    loss_clean = combined_loss(enhanced_stft, clean_stft)
+                    loss_smooth = temporal_smoothing_loss(enhanced_stft)
+                    loss_refine = refinement_constraint_loss(enhanced_stft, transformer_stft)
+
+                    loss = loss_clean + lambda_smooth * loss_smooth + lambda_refine * loss_refine
+
+                    total_clean_loss += loss_clean.item()
+                    total_smooth_loss += loss_smooth.item()
+                    total_refine_loss += loss_refine.item()
+                else:
+                    # Standard mode
+                    mask = model(noisy_stft)
+                    enhanced_stft = mask * noisy_stft
+                    loss = combined_loss(enhanced_stft, clean_stft)
+
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             scaler.step(optimizer)
             scaler.update()
         else:
-            mask = model(noisy_stft)
-            enhanced_stft = mask * noisy_stft
-            loss = combined_loss(enhanced_stft, clean_stft)
+            if use_refinement:
+                mask, transformer_mask = model(noisy_stft)
+                enhanced_stft = mask * noisy_stft
+                transformer_stft = transformer_mask * noisy_stft
+
+                loss_clean = combined_loss(enhanced_stft, clean_stft)
+                loss_smooth = temporal_smoothing_loss(enhanced_stft)
+                loss_refine = refinement_constraint_loss(enhanced_stft, transformer_stft)
+
+                loss = loss_clean + lambda_smooth * loss_smooth + lambda_refine * loss_refine
+
+                total_clean_loss += loss_clean.item()
+                total_smooth_loss += loss_smooth.item()
+                total_refine_loss += loss_refine.item()
+            else:
+                mask = model(noisy_stft)
+                enhanced_stft = mask * noisy_stft
+                loss = combined_loss(enhanced_stft, clean_stft)
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
 
         total_loss += loss.item()
 
-    return total_loss / len(loader)
+    avg_loss = total_loss / len(loader)
+    if use_refinement:
+        print(f"  L_clean={total_clean_loss/len(loader):.4f}, L_smooth={total_smooth_loss/len(loader):.4f}, L_refine={total_refine_loss/len(loader):.4f}")
+    return avg_loss
 
-def validate(model, loader):
+def validate(model, loader, use_refinement=False, lambda_smooth=0.1, lambda_refine=0.5):
     model.eval()
     total_loss = 0
 
     with torch.no_grad():
         for noisy_stft, clean_stft in tqdm(loader, desc="Validation"):
             noisy_stft, clean_stft = noisy_stft.to(device), clean_stft.to(device)
-            mask = model(noisy_stft)
-            enhanced_stft = mask * noisy_stft
-            loss = combined_loss(enhanced_stft, clean_stft)
+
+            if use_refinement:
+                mask, transformer_mask = model(noisy_stft)
+                enhanced_stft = mask * noisy_stft
+                transformer_stft = transformer_mask * noisy_stft
+
+                loss_clean = combined_loss(enhanced_stft, clean_stft)
+                loss_smooth = temporal_smoothing_loss(enhanced_stft)
+                loss_refine = refinement_constraint_loss(enhanced_stft, transformer_stft)
+
+                loss = loss_clean + lambda_smooth * loss_smooth + lambda_refine * loss_refine
+            else:
+                mask = model(noisy_stft)
+                enhanced_stft = mask * noisy_stft
+                loss = combined_loss(enhanced_stft, clean_stft)
+
             total_loss += loss.item()
 
     return total_loss / len(loader)
@@ -299,16 +434,21 @@ def validate(model, loader):
 # Main
 if __name__ == "__main__":
     print("\nLoading dataset...")
-    cache_dir = '/home/dlwlx05/project/NIAM/data/cache'
+    cache_dir = CLEAN_SA_CACHE
     os.makedirs(cache_dir, exist_ok=True)
-    
-    ds_microset = load_dataset("MLCommons/peoples_speech", "microset", split="train", cache_dir=cache_dir)
-    ds_microset = ds_microset.cast_column("audio", Audio(sampling_rate=16000))
-    dataset = ds_microset
 
-    # Create train/val split
-    train_indices = list(range(0, 270))
-    val_indices = list(range(270, 336))
+    ds_clean_sa = load_dataset("MLCommons/peoples_speech", "clean_sa", split="train", cache_dir=cache_dir)
+    ds_clean_sa = ds_clean_sa.cast_column("audio", Audio(sampling_rate=16000))
+    dataset = ds_clean_sa
+
+    # Create train/val split (90% train, 10% validation)
+    # Use only 50,000 samples from the dataset (instead of all ~300k)
+    total_samples = min(50000, len(dataset))
+    train_size = int(0.9 * total_samples)  # 45,000 for training
+    train_indices = list(range(0, train_size))
+    val_indices = list(range(train_size, total_samples))  # 5,000 for validation
+
+    print(f"\nUsing {total_samples:,} samples from dataset (train: {train_size:,}, val: {len(val_indices):,})")
 
     audio_processor = STFTProcessor()
 
@@ -354,7 +494,8 @@ if __name__ == "__main__":
     print("\nCreating model...")
     model = TransformerEnhancer(
         n_freq_bins=201, d_model=256, nhead=8, num_layers=4,
-        dim_feedforward=1024, dropout=0.1, use_niam=USE_NIAM
+        dim_feedforward=1024, dropout=0.1, use_niam=USE_NIAM,
+        refinement_mode=USE_REFINEMENT, refinement_alpha=REFINEMENT_ALPHA
     ).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -364,18 +505,45 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
     scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
 
-    checkpoint_dir = '/home/dlwlx05/project/NIAM/results/niam_v2/checkpoints'
+    # Save to different directory for refinement mode
+    if USE_REFINEMENT:
+        checkpoint_dir = os.path.join(RESULTS_DIR, 'niam_v2_refined', 'checkpoints')
+    else:
+        checkpoint_dir = os.path.join(RESULTS_DIR, 'niam_v2', 'checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    # Resume from checkpoint if exists
+    start_epoch = 0
+    best_val_loss = float('inf')
+    if USE_REFINEMENT:
+        checkpoint_path = os.path.join(checkpoint_dir, "transformer_niam_v2_refined_best.pt")
+    else:
+        checkpoint_path = os.path.join(checkpoint_dir, "transformer_niam_v2_best.pt")
+
+    if os.path.exists(checkpoint_path):
+        print(f"\nFound existing checkpoint: {checkpoint_path}")
+        print("Loading model weights to resume training...")
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        print("Model weights loaded successfully!")
+        print("Note: Starting from epoch 0 with loaded weights (optimizer state not saved)")
+
     print("\n" + "="*70)
-    print("Training NIAM v2 Transformer")
+    if USE_REFINEMENT:
+        print("Training NIAM v2 Residual Refinement Transformer")
+    else:
+        print("Training NIAM v2 Transformer")
     print("="*70)
 
-    best_val_loss = float('inf')
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(start_epoch, NUM_EPOCHS):
         start_time = time.time()
-        train_loss = train_epoch(model, train_loader, optimizer, scaler)
-        val_loss = validate(model, val_loader)
+        train_loss = train_epoch(model, train_loader, optimizer, scaler,
+                                use_refinement=USE_REFINEMENT,
+                                lambda_smooth=LAMBDA_SMOOTH,
+                                lambda_refine=LAMBDA_REFINE)
+        val_loss = validate(model, val_loader,
+                           use_refinement=USE_REFINEMENT,
+                           lambda_smooth=LAMBDA_SMOOTH,
+                           lambda_refine=LAMBDA_REFINE)
         scheduler.step()
         epoch_time = time.time() - start_time
 
@@ -383,10 +551,13 @@ if __name__ == "__main__":
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            checkpoint_path = os.path.join(checkpoint_dir, "transformer_niam_v2_best.pt")
+            if USE_REFINEMENT:
+                checkpoint_path = os.path.join(checkpoint_dir, "transformer_niam_v2_refined_best.pt")
+            else:
+                checkpoint_path = os.path.join(checkpoint_dir, "transformer_niam_v2_best.pt")
             torch.save(model.state_dict(), checkpoint_path)
             print(f"  -> Saved (best_val={val_loss:.4f})")
-        
+
         # Print learned residual weights at end
         if epoch == NUM_EPOCHS - 1 and hasattr(model, 'niam') and model.niam is not None:
             print("\nLearned residual weights:")
@@ -396,5 +567,7 @@ if __name__ == "__main__":
             print(f"  Module 4: {model.niam.residual_weight_4.item():.3f}")
 
     print(f"\n✓ Training complete! Best val loss: {best_val_loss:.4f}")
-    print(f"\nCheckpoint saved: {checkpoint_dir}/transformer_niam_v2_best.pt")
-    print("\nNext: Send results to zxp for GPU testing")
+    print(f"\nCheckpoint saved: {checkpoint_path}")
+    if USE_REFINEMENT:
+        print("\nRefinement mode enabled: Model trained to smooth Transformer output")
+        print("Next: Run inference and compare PESQ/STOI with original NIAM v2")

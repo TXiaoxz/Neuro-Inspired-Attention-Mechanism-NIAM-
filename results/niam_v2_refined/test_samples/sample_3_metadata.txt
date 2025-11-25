@@ -1,0 +1,6 @@
+Sample 3
+Dataset Index: 273
+Text: draw together people individuals and groups who are concerned about all these issues the more strength you've got and the more the more imput from all the different groups who have each got their own little piece of the puzzle which they can i mean they can
+Interferer Indices: [154795, 110605, 8332, 7812, 24562]
+SNR: 8 dB
+Duration: 10.00s

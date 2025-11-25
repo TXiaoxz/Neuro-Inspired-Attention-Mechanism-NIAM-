@@ -1,0 +1,6 @@
+Sample 5
+Dataset Index: 275
+Text: all the members of our board as individuals would be in support of this new group as registered charity and funded by a variety of different private and public agencies
+Interferer Indices: [147128, 52125, 187701, 170364, 183849]
+SNR: 8 dB
+Duration: 10.00s
